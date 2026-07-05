@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/>
+<title>Project Work 早餐店 Prototype V0.1</title>
+<style>
+  html,body{margin:0;height:100%;background:#17191f;color:#fff;font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif;overflow:hidden}
+  #wrap{display:flex;flex-direction:column;height:100%}
+  #top{padding:8px 10px;background:#242833;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:14px}
+  #game{flex:1;width:100%;touch-action:none;background:#ddd}
+  .pill{background:#343a48;padding:5px 9px;border-radius:999px}
+  #msg{color:#ffe28a}
+  #help{position:fixed;right:8px;bottom:8px;background:#111c;padding:8px 10px;border-radius:10px;font-size:12px;max-width:300px}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="top">
+    <span class="pill">時間 <b id="time">180</b>s</span>
+    <span class="pill">金幣 <b id="score">0</b></span>
+    <span class="pill">漏單 <b id="miss">0</b></span>
+    <span class="pill">目前角色 <b id="who">1</b></span>
+    <span id="msg">目標：完成訂單。第 90 秒會發生流程中斷。</span>
+  </div>
+  <canvas id="game"></canvas>
+</div>
+<div id="help">鍵盤：WASD 移動｜E 拿/放｜F 操作工作站｜Q 切換角色<br>手機：左半邊拖曳移動｜右半邊點一下=E｜右半邊雙擊=F｜右上角點擊=切換角色</div>
+<script>
+const c=document.getElementById('game'),x=c.getContext('2d');
+let W,H,DPR=devicePixelRatio||1;
+function resize(){W=c.clientWidth;H=c.clientHeight;c.width=W*DPR;c.height=H*DPR;x.setTransform(DPR,0,0,DPR,0,0)}
+addEventListener('resize',resize);resize();
+
+const colors=['#ef5350','#42a5f5','#66bb6a','#ab47bc'];
+let players=[0,1,2,3].map(i=>({x:100+i*35,y:120,carry:null}));
+let active=0, keys={}, score=0,miss=0,time=180,last=performance.now(),eventFired=false;
+const stations=[
+ {id:'meat',name:'煎台',x:W*.18,y:H*.25,w:90,h:60,color:'#8d6e63',need:'rawMeat',out:'meat',cook:0},
+ {id:'toast',name:'吐司台',x:W*.42,y:H*.20,w:90,h:60,color:'#ffcc80',need:'bread',out:'toast',cook:0},
+ {id:'pot',name:'爐台',x:W*.68,y:H*.25,w:90,h:60,color:'#78909c',need:'veg',out:'soup',cook:0},
+ {id:'serve',name:'出餐口',x:W*.46,y:H*.72,w:110,h:55,color:'#26a69a'}
+];
+let bins=[
+ {type:'rawMeat',name:'生肉',x:25,y:H*.48,w:70,h:55,color:'#e57373'},
+ {type:'bread',name:'吐司',x:25,y:H*.62,w:70,h:55,color:'#ffe082'},
+ {type:'veg',name:'青菜',x:W-95,y:H*.48,w:70,h:55,color:'#81c784'}
+];
+let orders=[], orderTimer=0, shortage=false;
+function addOrder(){
+ let types=['meat','toast','soup'];
+ let count=Math.random()<.28?2:1;
+ let items=[];
+ while(items.length<count){let t=types[Math.floor(Math.random()*types.length)]; if(!items.includes(t))items.push(t)}
+ orders.push({items,age:0,limit:32+Math.random()*16});
+}
+addOrder();addOrder();
+
+function near(p,o,r=55){let cx=o.x+o.w/2,cy=o.y+o.h/2;return Math.hypot(p.x-cx,p.y-cy)<r}
+function interact(){
+ let p=players[active];
+ if(p.carry){
+   for(let s of stations) if(near(p,s,70)){
+     if(s.id==='serve'){
+       let idx=orders.findIndex(o=>o.items.includes(p.carry));
+       if(idx>=0){orders[idx].items.splice(orders[idx].items.indexOf(p.carry),1);score+=20;p.carry=null;
+         if(orders[idx].items.length===0){score+=40;orders.splice(idx,1)}
+         return;
+       }
+     } else if(!s.input && p.carry===s.need){s.input=p.carry;p.carry=null;return}
+   }
+   return;
+ }
+ for(let b of bins) if(near(p,b,70)){
+   if(shortage && b.type==='rawMeat'){say('生肉缺貨！要重新分工或改做其他訂單');return}
+   p.carry=b.type;return;
+ }
+ for(let s of stations) if(near(p,s,70) && s.output){p.carry=s.output;s.output=null;return}
+}
+function operate(){
+ let p=players[active];
+ for(let s of stations) if(s.id!=='serve'&&near(p,s,75)&&s.input&&!s.output){
+   s.cook=Math.min(100,s.cook+34);
+   if(s.cook>=100){s.output=s.out;s.input=null;s.cook=0;say(s.name+'完成：'+s.out)}
+   return;
+ }
+}
+function say(t){document.getElementById('msg').textContent=t}
+
+addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if(e.key.toLowerCase()==='e')interact();if(e.key.toLowerCase()==='f')operate();if(e.key.toLowerCase()==='q'){active=(active+1)%4}});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+
+let touchStart=null,lastTap=0;
+c.addEventListener('pointerdown',e=>{
+ const r=c.getBoundingClientRect(),px=e.clientX-r.left,py=e.clientY-r.top;
+ if(px>W*.75&&py<H*.22){active=(active+1)%4;return}
+ if(px<W*.5) touchStart={id:e.pointerId,x:px,y:py,cx:px,cy:py};
+ else {
+   let now=performance.now(); if(now-lastTap<330)operate(); else setTimeout(()=>{if(performance.now()-lastTap>=300)interact()},310); lastTap=now;
+ }
+});
+c.addEventListener('pointermove',e=>{if(touchStart&&e.pointerId===touchStart.id){const r=c.getBoundingClientRect();touchStart.cx=e.clientX-r.left;touchStart.cy=e.clientY-r.top}});
+c.addEventListener('pointerup',e=>{if(touchStart&&e.pointerId===touchStart.id)touchStart=null});
+
+function update(dt){
+ let p=players[active],dx=0,dy=0;
+ if(keys.w)dy--;if(keys.s)dy++;if(keys.a)dx--;if(keys.d)dx++;
+ if(touchStart){dx=(touchStart.cx-touchStart.x)/45;dy=(touchStart.cy-touchStart.y)/45}
+ let m=Math.hypot(dx,dy)||1;p.x+=dx/m*150*dt;p.y+=dy/m*150*dt;
+ p.x=Math.max(12,Math.min(W-12,p.x));p.y=Math.max(12,Math.min(H-12,p.y));
+ time-=dt; orderTimer+=dt;
+ let interval=time<90?8:12;
+ if(orderTimer>interval){orderTimer=0;addOrder()}
+ orders.forEach(o=>o.age+=dt);
+ for(let i=orders.length-1;i>=0;i--)if(orders[i].age>orders[i].limit){orders.splice(i,1);miss++;score=Math.max(0,score-30)}
+ if(!eventFired&&time<90){eventFired=true;shortage=true;say('⚠ 突發：生肉供應中斷 25 秒！重新分工、先做其他單，或承受漏單。');setTimeout(()=>{shortage=false;say('生肉恢復供應。你們剛才怎麼應變？')},25000)}
+ if(time<=0){time=0;say('測試結束：記錄「何時需要切人、哪裡卡住、事件後是否改變策略」。')}
+}
+function rect(o){x.fillStyle=o.color;x.fillRect(o.x,o.y,o.w,o.h);x.fillStyle='#111';x.font='13px sans-serif';x.fillText(o.name,o.x+6,o.y+18)}
+function draw(){
+ x.clearRect(0,0,W,H);x.fillStyle='#ece7dc';x.fillRect(0,0,W,H);
+ x.fillStyle='#c8bfae';x.fillRect(W*.1,H*.1,W*.8,H*.78);
+ stations.forEach(s=>{rect(s); if(s.input||s.output){x.fillStyle='#111';x.fillText((s.input?'入:'+s.input:'')+(s.output?' 出:'+s.output:''),s.x+4,s.y+s.h-8)} if(s.cook){x.fillStyle='#fff';x.fillRect(s.x,s.y+s.h+4,s.w*s.cook/100,5)}});
+ bins.forEach(rect);
+ x.fillStyle='#fff';x.fillRect(W*.28,8,W*.44,72);x.fillStyle='#111';x.font='12px sans-serif';x.fillText('訂單佇列',W*.29,25);
+ orders.slice(0,5).forEach((o,i)=>{x.fillText(`${i+1}. ${o.items.join('+')}  ${Math.max(0,Math.ceil(o.limit-o.age))}s`,W*.29,42+i*13)});
+ players.forEach((p,i)=>{x.beginPath();x.arc(p.x,p.y,14,0,Math.PI*2);x.fillStyle=colors[i];x.fill();if(i===active){x.strokeStyle='#000';x.lineWidth=3;x.stroke()}x.fillStyle='#fff';x.fillText(i+1,p.x-4,p.y+4);if(p.carry){x.fillStyle='#111';x.fillText(p.carry,p.x-20,p.y-20)}});
+ if(touchStart){x.strokeStyle='#555';x.beginPath();x.arc(touchStart.x,touchStart.y,28,0,Math.PI*2);x.stroke();x.beginPath();x.arc(touchStart.cx,touchStart.cy,16,0,Math.PI*2);x.stroke()}
+}
+function loop(t){let dt=Math.min(.033,(t-last)/1000);last=t;if(time>0)update(dt);draw();document.getElementById('time').textContent=Math.ceil(time);document.getElementById('score').textContent=score;document.getElementById('miss').textContent=miss;document.getElementById('who').textContent=active+1;requestAnimationFrame(loop)}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
